@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teacher Dashboard | Smart Attendance</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+    <style>
+        body {
+            background: #f0f2f5;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .dashboard-container {
+            max-width: 600px;
+            margin: 30px auto;
+        }
+
+        .card {
+            border-radius: 15px;
+            border: none;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .status-badge {
+            font-size: 1.2rem;
+            padding: 10px 20px;
+            border-radius: 30px;
+        }
+
+        .btn-toggle {
+            font-weight: bold;
+            padding: 12px;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container dashboard-container">
+        <a href="index.html" class="btn btn-outline-secondary mb-3">← Back to Home</a>
+
+        <div class="card p-4">
+            <h2 class="fw-bold text-center mb-4">👨‍🏫 Teacher Dashboard</h2>
+
+            <div class="text-center mb-4">
+                <span id="statusBadge" class="badge status-badge bg-secondary">Loading...</span>
+            </div>
+
+            <div id="setupView" style="display: none;">
+                <div class="mb-3">
+                    <label class="form-label"><b>Subject Name</b></label>
+                    <input type="text" id="subjectInput" class="form-control" placeholder="e.g. Mathematics - Sec A">
+                </div>
+                <button onclick="captureAndToggle(true)" class="btn btn-primary w-100 btn-toggle">
+                    Enable Attendance Tracking
+                </button>
+            </div>
+
+            <div id="activeView" style="display: none;">
+                <div class="alert alert-success text-center">
+                    <h5 class="mb-1">Tracking Active</h5>
+                    <small id="activeSubject"></small>
+                </div>
+                <button onclick="captureAndToggle(false)" class="btn btn-danger w-100 btn-toggle">
+                    Disable Attendance Tracking
+                </button>
+            </div>
+
+            <div id="exportView" class="mt-4" style="display: none;">
+                <hr>
+                <button onclick="exportToExcel()" class="btn btn-success w-100 py-3 fw-bold">
+                    💾 Download Attendance Report (Excel)
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const SUPABASE_URL = "https://mgnawoklfbbwokwuvbih.supabase.co";
+        const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nbmF3b2tsZmJid29rd3V2YmloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE3NzE3NzAsImV4cCI6MjA4NzM0Nzc3MH0._jGG9YxFYIGqZPILGcMNQD4J1aDVKctFHSIQfZBEp7c";
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        let currentStatus = false;
+
+        async function init() {
+            try {
+                const { data, error } = await supabaseClient.from('settings').select('*').eq('id', 1).single();
+                if (error) throw error;
+                if (data) {
+                    updateUI(data.enabled, data.subject);
+                }
+            } catch (err) {
+                console.error(err);
+                alert("Database connection failed! Please check if you ran the SQL script in Supabase.");
+                document.getElementById('statusBadge').innerText = "ERROR";
+            }
+        }
+
+        function updateUI(enabled, subject = "") {
+            currentStatus = enabled;
+            const badge = document.getElementById('statusBadge');
+            badge.innerText = enabled ? "ENABLED" : "DISABLED";
+            badge.className = `badge status-badge bg-${enabled ? 'success' : 'danger'}`;
+
+            document.getElementById('setupView').style.display = enabled ? 'none' : 'block';
+            document.getElementById('activeView').style.display = enabled ? 'block' : 'none';
+            document.getElementById('exportView').style.display = enabled ? 'none' : 'block';
+
+            if (enabled) {
+                document.getElementById('activeSubject').innerText = "Subject: " + subject;
+            }
+        }
+
+        function captureAndToggle(toEnable) {
+            if (toEnable && !document.getElementById('subjectInput').value) {
+                alert("Please enter a subject name!");
+                return;
+            }
+
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(async (pos) => {
+                    const subject = document.getElementById('subjectInput').value;
+                    const { error } = await supabaseClient.from('settings').update({
+                        enabled: toEnable,
+                        sir_lat: pos.coords.latitude,
+                        sir_lon: pos.coords.longitude,
+                        subject: toEnable ? subject : null
+                    }).eq('id', 1);
+
+                    if (error) alert("Error: " + error.message);
+                    else init();
+                }, (err) => alert("Location permission required! Error: " + err.message));
+            } else {
+                alert("Geolocation not supported by browser.");
+            }
+        }
+
+        async function exportToExcel() {
+            const { data, error } = await supabaseClient.from('attendance').select('*').order('created_at', { ascending: false });
+            if (error) {
+                alert("Error fetching data: " + error.message);
+                return;
+            }
+
+            if (data.length === 0) {
+                alert("No attendance records found to export!");
+                return;
+            }
+
+            const rows = data.map(r => ({
+                "Name": r.name,
+                "Enrollment": r.enrollment,
+                "Semester": r.semester,
+                "Course": r.course,
+                "Date": r.date,
+                "Time": r.time,
+                "Subject": r.subject,
+                "Latitude": r.lat,
+                "Longitude": r.lon,
+                "Phone": r.phone
+            }));
+
+            const worksheet = XLSX.utils.json_to_sheet(rows);
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, "Attendance");
+            XLSX.writeFile(workbook, `Attendance_Report_${new Date().toLocaleDateString()}.xlsx`);
+        }
+
+        init();
+
+        supabaseClient.channel('custom-all-channel')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, () => init())
+            .subscribe();
+    </script>
+</body>
+
+</html>

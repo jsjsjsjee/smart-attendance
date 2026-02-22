@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mark Attendance | Smart Attendance</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body {
+            background: #f0f2f5;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .attendance-container {
+            max-width: 500px;
+            margin: 30px auto;
+        }
+
+        .card {
+            border-radius: 15px;
+            border: none;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .details-box {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            border-left: 5px solid #00b894;
+        }
+
+        .btn-mark {
+            font-weight: bold;
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 1.1rem;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container attendance-container">
+        <a href="index.html" class="btn btn-outline-secondary mb-3">← Back</a>
+
+        <div class="card p-4">
+            <h2 class="fw-bold text-center mb-4"> Mark Attendance</h2>
+
+            <div id="statusAlert" class="alert alert-info text-center" style="display: none;"></div>
+
+            <div class="details-box mb-4">
+                <small class="text-muted d-block mb-2">PARTICIPANT DETAILS</small>
+                <h5 id="name" class="fw-bold mb-1">...</h5>
+                <p id="enrollment" class="mb-1 text-secondary">...</p>
+                <p id="course" class="mb-0 text-secondary">...</p>
+            </div>
+
+            <div class="mb-4">
+                <label class="form-label"><b>Update Semester (Current)</b></label>
+                <input type="text" id="semesterInput" class="form-control" placeholder="e.g. 6th Sem">
+            </div>
+
+            <button id="markBtn" onclick="verifyAndMark()" class="btn btn-primary w-100 btn-mark shadow">
+                🚀 I Am Present
+            </button>
+
+            <div class="text-center mt-4">
+                <button onclick="resetData()" class="btn btn-link btn-sm text-danger">Reset My Identity Data</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const SUPABASE_URL = "https://mgnawoklfbbwokwuvbih.supabase.co";
+        const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1nbmF3b2tsZmJid29rd3V2YmloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE3NzE3NzAsImV4cCI6MjA4NzM0Nzc3MH0._jGG9YxFYIGqZPILGcMNQD4J1aDVKctFHSIQfZBEp7c";
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+        let studentData = JSON.parse(localStorage.getItem('student_data'));
+
+        function init() {
+            if (!studentData) {
+                window.location.href = "student_register.html";
+                return;
+            }
+            document.getElementById('name').innerText = studentData.name;
+            document.getElementById('enrollment').innerText = "ID: " + studentData.enrollment;
+            document.getElementById('course').innerText = "Course: " + studentData.course;
+            document.getElementById('semesterInput').value = studentData.semester;
+        }
+
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            return R * c;
+        }
+
+        async function verifyAndMark() {
+            const btn = document.getElementById('markBtn');
+            try {
+                const { data: settings, error: sError } = await supabaseClient.from('settings').select('*').eq('id', 1).single();
+                if (sError) throw sError;
+                if (!settings || !settings.enabled) {
+                    showAlert("Attendance tracking is currently closed by the teacher.", "warning");
+                    return;
+                }
+
+                const today = new Date().toISOString().split('T')[0];
+                const { data: existing, error: eError } = await supabaseClient.from('attendance')
+                    .select('*')
+                    .eq('enrollment', studentData.enrollment)
+                    .eq('date', today)
+                    .eq('subject', settings.subject);
+
+                if (eError) throw eError;
+                if (existing && existing.length > 0) {
+                    showAlert("Attendance already marked for this subject today!", "info");
+                    return;
+                }
+
+                btn.disabled = true;
+                btn.innerText = "🔍 Verifying Location...";
+
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(async (pos) => {
+                        const dist = calculateDistance(
+                            pos.coords.latitude, pos.coords.longitude,
+                            settings.sir_lat, settings.sir_lon
+                        );
+
+                        if (dist > 0.1) {
+                            showAlert("Verification failed! You are outside the classroom.", "danger");
+                            btn.disabled = false;
+                            btn.innerText = "🚀 I Am Present";
+                            return;
+                        }
+
+                        const { error } = await supabaseClient.from('attendance').insert([{
+                            name: studentData.name,
+                            enrollment: studentData.enrollment,
+                            course: studentData.course,
+                            semester: document.getElementById('semesterInput').value,
+                            subject: settings.subject,
+                            phone: studentData.phone,
+                            lat: pos.coords.latitude,
+                            lon: pos.coords.longitude,
+                            date: today,
+                            time: new Date().toLocaleTimeString('en-GB')
+                        }]);
+
+                        if (error) {
+                            showAlert("Database Error: " + error.message, "danger");
+                            btn.disabled = false;
+                            btn.innerText = "🚀 I Am Present";
+                        } else {
+                            showAlert("Attendance marked successfully! ✅", "success");
+                            btn.innerText = "✅ Marked";
+                            studentData.semester = document.getElementById('semesterInput').value;
+                            localStorage.setItem('student_data', JSON.stringify(studentData));
+                        }
+                    }, (err) => {
+                        showAlert("Location access denied! Error: " + err.message, "danger");
+                        btn.disabled = false;
+                        btn.innerText = "🚀 I Am Present";
+                    });
+                } else {
+                    showAlert("Geolocation not supported.", "danger");
+                    btn.disabled = false;
+                    btn.innerText = "🚀 I Am Present";
+                }
+            } catch (err) {
+                console.error(err);
+                showAlert("Connection Error: " + err.message, "danger");
+            }
+        }
+
+        function showAlert(msg, type) {
+            const box = document.getElementById('statusAlert');
+            box.innerText = msg;
+            box.className = `alert alert-${type} text-center`;
+            box.style.display = 'block';
+        }
+
+        function resetData() {
+            if (confirm("Reset local identity?")) {
+                localStorage.removeItem('student_data');
+                window.location.href = "student_register.html";
+            }
+        }
+
+        init();
+    </script>
+</body>
+
+</html>
